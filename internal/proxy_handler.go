@@ -7,10 +7,12 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"path"
+	"path/filepath"
 )
 
 func NewProxyHandler(targetUrl *url.URL, badGatewayPage string) http.Handler {
-	return &httputil.ReverseProxy{
+	proxy := &httputil.ReverseProxy{
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(targetUrl)
 			r.Out.Host = r.In.Host
@@ -20,6 +22,18 @@ func NewProxyHandler(targetUrl *url.URL, badGatewayPage string) http.Handler {
 		ErrorHandler: ProxyErrorHandler(badGatewayPage),
 		Transport:    createProxyTransport(),
 	}
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		filePath := filepath.Join("public", "cached_pages", path.Clean(r.URL.Path)) + ".html"
+		if _, err := os.Stat(filePath); err == nil {
+			slog.Info("******** serving from page cache", "path", filePath)
+			http.ServeFile(w, r, filePath)
+			return
+		} else {
+			slog.Info("******** no page cache found", "path", filePath)
+		}
+		proxy.ServeHTTP(w, r)
+	})
 }
 
 func ProxyErrorHandler(badGatewayPage string) func(w http.ResponseWriter, r *http.Request, err error) {
